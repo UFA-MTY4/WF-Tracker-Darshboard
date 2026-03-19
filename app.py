@@ -226,10 +226,12 @@ for c in ["Type", "Class", "Status", "Product"]:
     if c in df.columns:
         df[c] = df[c].astype(str).str.upper().str.strip() if c != "Product" else df[c].astype(str).str.strip()
 
-df_global = df.copy()
-
-# Column Name (for re usage)
+# (Opcional) Normalizar también la columna de clasificación: mantenemos mayúsculas para facilitar el filtrado
 col_clasif = "Classification [Completion-Due Date]"
+if col_clasif in df.columns:
+    df[col_clasif] = df[col_clasif].astype(str).str.upper().str.strip()
+
+df_global = df.copy()
 
 # =========================
 # FILTER OPTIONS
@@ -242,6 +244,10 @@ class_options = sorted(df["Class"].dropna().unique()) if "Class" in df.columns e
 status_options = ["I","C","X"] if "Status" in df.columns else []
 product_options = sorted(df["Product"].dropna().unique()) if "Product" in df.columns else []
 
+# >>> NUEVO: opciones para Classification [Completion-Due Date]
+clasif_options = sorted(df[col_clasif].dropna().unique()) if col_clasif in df.columns else []
+
+# Estado inicial
 for key, default in {
     "fecha_inicio": first_day_month,
     "fecha_fin": today,
@@ -250,7 +256,9 @@ for key, default in {
     "type": type_options,
     "class_sel": class_options,
     "status": status_options,
-    "product_sel": product_options
+    "product_sel": product_options,
+    # >>> NUEVO: estado por defecto del filtro de clasificación
+    "clasif_sel": clasif_options
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -264,6 +272,8 @@ def reset_filters():
     st.session_state.class_sel = class_options
     st.session_state.status = status_options
     st.session_state.product_sel = product_options
+    # >>> NUEVO: reset del multiselect de clasificación
+    st.session_state.clasif_sel = clasif_options
 
 st.sidebar.button("Reset Filters", on_click=reset_filters)
 
@@ -293,6 +303,10 @@ class_sel = st.sidebar.multiselect("Class", class_options, key="class_sel")
 status_sel = st.sidebar.multiselect("Status", status_options, key="status")
 product_sel = st.sidebar.multiselect("Product", product_options, key="product_sel")
 
+# >>> NUEVO: multiselect para Classification [Completion-Due Date]
+clasif_sel = []
+if col_clasif in df.columns:
+    clasif_sel = st.sidebar.multiselect("Classification [Completion-Due Date]", clasif_options, key="clasif_sel")
 
 # =========================
 # FILTERED DATAFRAME
@@ -316,7 +330,9 @@ df_filtered = df.loc[
     (df["Type"].isin(type_sel) if "Type" in df.columns else True) &
     (df["Class"].isin(class_sel) if "Class" in df.columns else True) &
     (df["Status"].isin(status_sel) if "Status" in df.columns else True) &
-    (df["Product"].isin(product_sel) if "Product" in df.columns else True)
+    (df["Product"].isin(product_sel) if "Product" in df.columns else True) &
+    # >>> NUEVO: aplicar filtro de clasificación si hay selección
+    (df[col_clasif].isin(clasif_sel) if (col_clasif in df.columns and len(clasif_sel) > 0) else True)
 ].copy()
 
 if sales_filter and "Sales Number" in df_filtered.columns:
@@ -330,7 +346,6 @@ if job_filter and "Job Name" in df_filtered.columns:
         df_filtered["Job Name"].astype(str)
         .str.contains(job_filter, case=False, na=False)
     ]
-
 # =========================
 # CARDS ROW 1
 # =========================
