@@ -851,7 +851,7 @@ else:
 # GLOBAL ANALYTICS
 # =========================
 st.markdown("---")
-st.markdown("## 🌍 Global Analytics")
+st.markdown("## Global Analytics")
 
 # Month labels (text) y columns for order
 df_global["Month"] = df_global[col_fecha].dt.strftime("%B")
