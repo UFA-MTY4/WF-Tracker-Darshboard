@@ -423,7 +423,7 @@ colF.metric("Late WF - LATE BY ENG (Filtered)", f"{late_filtered}")
 # =========================
 # FILTERED ANALYTICS
 # =========================
-st.markdown("## 📊 Filtered Analytics")
+st.markdown("## Filtered Analytics")
 
 if not df_filtered.empty:
 
@@ -514,12 +514,20 @@ st.markdown("## Projects Impacted (Filtered) & Average Time Metrics (Filtered)")
 
 # Nombres de columnas según tu dataset
 col_impacted = "Impacted Post RM"
-col_wf_submit = "WF SUBMITTAL [RM<5/10 DAYS]"
+
+# Resolver nombre real de WF SUBMITTAL (algunas fuentes traen &lt;)
+wf_candidates = [
+    "WF SUBMITTAL [RM<5/10 DAYS]",
+    "WF SUBMITTAL [RM&lt;5/10 DAYS]"
+]
+col_wf_submit = next((c for c in wf_candidates if c in df_filtered.columns), wf_candidates[0])
+
 col_job = "Job Name"
 col_status = "Status"
+col_template = "Classification not considering 15+ days"
 
 # Validar columnas requeridas
-required_cols = [col_job, col_impacted, col_wf_submit, col_clasif, col_status]
+required_cols = [col_job, col_impacted, col_wf_submit, col_clasif, col_status, col_template]
 missing = [c for c in required_cols if c not in df_filtered.columns]
 
 if missing:
@@ -528,13 +536,18 @@ if missing:
         + ", ".join(missing)
     )
 else:
-    # Masks  (case-insensitive)
-    impacted_mask = df_filtered[col_impacted].astype(str).str.contains("IMPACTED", case=False, na=False)
+    # ===== Masks (case-insensitive) =====
+    # CORREGIDA: incluir IMPACTED y excluir NOT IMPACTED
+    impacted_mask = (
+        df_filtered[col_impacted].astype(str).str.contains(r"\bIMPACTED\b", case=False, na=False)
+        & ~df_filtered[col_impacted].astype(str).str.contains(r"\bNOT[-\s]*IMPACTED\b", case=False, na=False)
+    )
 
     late_by_eng_mask = df_filtered[col_wf_submit].astype(str).str.contains("LATE BY ENG", case=False, na=False)
     ontime_by_eng_mask = df_filtered[col_wf_submit].astype(str).str.contains("ON TIME BY ENG", case=False, na=False)
 
-    # Classification LATE (case-insensitive)
+    # LATE por plantilla (template) y LATE por clasificación
+    late_by_template_mask = df_filtered[col_template].astype(str).str.strip().str.upper().eq("LATE")
     late_class_mask = df_filtered[col_clasif].astype(str).str.strip().str.upper().eq("LATE")
 
     # Contar Job Names únicos
@@ -549,34 +562,57 @@ else:
             .nunique()
         )
 
+    # Helper para construir la tabla por categoría (1 fila por Job Name)
+    def build_table(df_sub):
+        cols_priority = [col_job, col_status, col_impacted, col_wf_submit, col_clasif, col_template]
+        cols_present = [c for c in cols_priority if c in df_sub.columns]
+        if not cols_present:
+            return pd.DataFrame()
+        tbl = df_sub[cols_present].copy()
+        tbl[col_job] = tbl[col_job].astype(str).str.strip()
+        tbl = tbl[tbl[col_job] != ""]
+        tbl = tbl.drop_duplicates(subset=[col_job]).sort_values(by=col_job)
+        return tbl
+
+    # ===== Subconjuntos por barra =====
     # 1) IMPACTED + LATE BY ENG
     df_impact_late = df_filtered[impacted_mask & late_by_eng_mask]
     n_impact_late = unique_jobs_count(df_impact_late)
+    tbl_impact_late = build_table(df_impact_late)
 
-    # 2) LATE (Classification)
-    df_late_class = df_filtered[late_class_mask]
-    n_late_class = unique_jobs_count(df_late_class)
+    # 2) LATE (Template)  -> usa col_template
+    df_late_template = df_filtered[late_by_template_mask]
+    n_late_template = unique_jobs_count(df_late_template)
+    tbl_late_template = build_table(df_late_template)
 
     # 3) IMPACTED + ON TIME BY ENG
     df_impact_ontime = df_filtered[impacted_mask & ontime_by_eng_mask]
     n_impact_ontime = unique_jobs_count(df_impact_ontime)
+    tbl_impact_ontime = build_table(df_impact_ontime)
 
-    # Crear DataFrame para la gráfica
+    # 4) IMPACTED + LATE (Classification) -> usa col_clasif
+    df_impact_late_class = df_filtered[impacted_mask & late_class_mask]
+    n_impact_late_class = unique_jobs_count(df_impact_late_class)
+    tbl_impact_late_class = build_table(df_impact_late_class)
+
+    # ===== DataFrame para la gráfica =====
     df_chart = pd.DataFrame({
         "Category": [
             "IMPACTED + LATE BY ENG",
             "LATE (Template)",
-            "IMPACTED + ON TIME BY ENG"
+            "IMPACTED + ON TIME BY ENG",
+            "IMPACTED + LATE (Template)"
         ],
         "Projects": [
             n_impact_late,
-            n_late_class,
-            n_impact_ontime
+            n_late_template,
+            n_impact_ontime,
+            n_impact_late_class
         ]
     })
-    
+
 # =========================
-# 📊 Average Time Metrics (Filtered) — Solo LATE y SUPER LATE
+# 📊 Average Time Metrics (Filtered)
 # =========================
 
 # -------------------------
@@ -613,7 +649,7 @@ avg_df = None  # Inicializamos para controlar el flujo
 
 # 1) Validar columna de clasificación
 if classification_col not in df_filtered.columns:
-    st.info("⚠️ La columna 'Classification [Completion-Due Date]' no existe en el dataset filtrado.")
+    st.info("⚠️ 'Classification [Completion-Due Date]' column does not exist within dataset selected.")
 else:
     # 2) Filtrar LATE y SUPER LATE (tolerante a espacios y mayúsculas)
     mask_late = (
@@ -624,7 +660,7 @@ else:
     df_late = df_filtered[mask_late]
 
     if df_late.empty:
-        st.info("ℹ️ No hay filas con clasificación 'LATE' o 'SUPER LATE' en el dataset filtrado.")
+        st.info("ℹ️ There are no WFs 'LATE' o 'SUPER LATE' within the dataset selected.")
     else:
         # 3) Verificar columnas de tiempo existentes en el subset filtrado
         valid_time_cols = [c for c in time_columns if c in df_late.columns]
@@ -643,7 +679,6 @@ else:
                         df_time[col] = td
                     else:
                         # Si no es hh:mm:ss, intentamos limpiar y convertir a numérico
-                        # (ej. valores como "12.3 h" -> "12.3")
                         cleaned = (
                             df_time[col]
                             .astype(str)
@@ -703,6 +738,7 @@ with ca:
         )
 
         st.plotly_chart(fig_unique_jobs, use_container_width=True)
+
     else:
         st.info("There is no data for the graph Impact/Late Conditions.")
 
@@ -714,14 +750,14 @@ with cb:
             x="Average",
             y="Metric",
             orientation="h",
-            title=f"Average Time Metrics (LATE & SUPER LATE) — {unit_label}",
+            title=f"Average Time Metrics — {unit_label}",
             text="Average",
             color="Average",
             color_continuous_scale="Greens"
         )
 
         # Forzar formato de las etiquetas (texto fuera de la barra, con n decimales)
-        texttemplate = "%{x:." + str(DECIMALS) + "f}"  # evita f-strings con llaves
+        texttemplate = "%{x:." + str(DECIMALS) + "f}"
         fig_time.update_traces(
             textposition="outside",
             texttemplate=texttemplate
@@ -738,12 +774,12 @@ with cb:
 
         st.plotly_chart(fig_time, use_container_width=True)
     else:
-        st.info("There is no data for the graph Average Time Metrics (LATE & SUPER LATE).")
+        st.info("There is no data for the graph Average Time Metrics.")
 
 # =========================
 # 2-COLUMN LAYOUT: Treemap (left) + Detail Selector (right)
 # =========================
-st.markdown("## 🗂️ WF per Task Responsible (Filtered)")
+st.markdown("## WF per Task Responsible (Filtered)")
 
 # DETECTAR COLUMNA 'Task responsible' (robusto)
 # =========================
