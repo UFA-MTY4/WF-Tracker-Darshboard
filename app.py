@@ -584,6 +584,9 @@ else:
     avg_df = df_time.mean().reset_index()
     avg_df.columns = ["Metric", "Average"]
 
+# Calcular promedios y redondear a 2 decimales
+avg_df = df_time.mean().round(2).reset_index()
+avg_df.columns = ["Metric", "Average"]
 
 # =========================
 # HORIZONTAL BAR CHARTS (2 columnas)
