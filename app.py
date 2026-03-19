@@ -655,18 +655,18 @@ else:
     mask_late = (
         df_filtered[classification_col]
         .astype(str).str.strip().str.upper()
-        .isin(["LATE", "SUPER LATE"])
+        .isin(["LATE", "SUPER LATE", "ON TIME"])
     )
     df_late = df_filtered[mask_late]
 
     if df_late.empty:
-        st.info("ℹ️ There are no WFs 'LATE' o 'SUPER LATE' within the dataset selected.")
+        st.info("ℹ️ There are no WFs 'LATE', 'SUPER LATE', 'ON TIME' within the dataset selected.")
     else:
         # 3) Verificar columnas de tiempo existentes en el subset filtrado
         valid_time_cols = [c for c in time_columns if c in df_late.columns]
 
         if not valid_time_cols:
-            st.info("⚠️ No time-related columns available in the LATE/SUPER LATE subset.")
+            st.info("⚠️ No time-related columns available in the LATE/SUPER LATE/ON TIME subset.")
         else:
             # ---------- Conversión robusta de tiempos ----------
             df_time = df_late[valid_time_cols].copy()
