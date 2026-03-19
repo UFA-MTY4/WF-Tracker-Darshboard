@@ -561,32 +561,101 @@ else:
     })
     
 # =========================
-# 📊 Average Time Metrics (Filtered)
+# 📊 Average Time Metrics (Filtered) — Solo LATE y SUPER LATE
 # =========================
 
-# Columnas objetivo
+# -------------------------
+# Parámetros de presentación
+# -------------------------
+DECIMALS = 2  # número de decimales para redondeo (0, 1, 2, ...)
+TIME_UNIT = "days"  # "days" | "hours" | "minutes"
+BG_COLOR = "#111111"  # ajusta si ya lo defines en otro sitio
+
+# Etiquetas por unidad
+unit_label = {
+    "days": "Days",
+    "hours": "Hours",
+    "minutes": "Minutes"
+}.get(TIME_UNIT, "Days")
+
+# Factor de conversión desde segundos
+seconds_divisor = {
+    "days": 86400.0,
+    "hours": 3600.0,
+    "minutes": 60.0
+}.get(TIME_UNIT, 86400.0)
+
+# Columnas objetivo de tiempo
 time_columns = [
     "Pre RM Opening Time",
     "Overdue Time [Expected-Completion]",
     "Active Time"
 ]
 
-# Verificar columnas existentes
-valid_time_cols = [c for c in time_columns if c in df_filtered.columns]
+classification_col = "Classification [Completion-Due Date]"
 
-if not valid_time_cols:
-    st.info("⚠️ No time-related columns available in the filtered dataset.")
+avg_df = None  # Inicializamos para controlar el flujo
+
+# 1) Validar columna de clasificación
+if classification_col not in df_filtered.columns:
+    st.info("⚠️ La columna 'Classification [Completion-Due Date]' no existe en el dataset filtrado.")
 else:
-    # Asegurar conversión numérica
-    df_time = df_filtered[valid_time_cols].apply(pd.to_numeric, errors="coerce")
+    # 2) Filtrar LATE y SUPER LATE (tolerante a espacios y mayúsculas)
+    mask_late = (
+        df_filtered[classification_col]
+        .astype(str).str.strip().str.upper()
+        .isin(["LATE", "SUPER LATE"])
+    )
+    df_late = df_filtered[mask_late]
 
-    # Calcular promedios
-    avg_df = df_time.mean().reset_index()
-    avg_df.columns = ["Metric", "Average"]
+    if df_late.empty:
+        st.info("ℹ️ No hay filas con clasificación 'LATE' o 'SUPER LATE' en el dataset filtrado.")
+    else:
+        # 3) Verificar columnas de tiempo existentes en el subset filtrado
+        valid_time_cols = [c for c in time_columns if c in df_late.columns]
 
-# Calcular promedios y redondear a 2 decimales
-avg_df = df_time.mean().round(2).reset_index()
-avg_df.columns = ["Metric", "Average"]
+        if not valid_time_cols:
+            st.info("⚠️ No time-related columns available in the LATE/SUPER LATE subset.")
+        else:
+            # ---------- Conversión robusta de tiempos ----------
+            df_time = df_late[valid_time_cols].copy()
+
+            # 3.1) Intentar convertir strings con formato hh:mm:ss a timedelta
+            for col in valid_time_cols:
+                if df_time[col].dtype == "O":
+                    td = pd.to_timedelta(df_time[col], errors="coerce")
+                    if td.notna().any():
+                        df_time[col] = td
+                    else:
+                        # Si no es hh:mm:ss, intentamos limpiar y convertir a numérico
+                        # (ej. valores como "12.3 h" -> "12.3")
+                        cleaned = (
+                            df_time[col]
+                            .astype(str)
+                            .str.replace("[^0-9:.\-]", "", regex=True)  # quita letras y símbolos
+                        )
+                        # Si parece hh:mm:ss tras limpiar, reintentar to_timedelta
+                        td2 = pd.to_timedelta(cleaned, errors="coerce")
+                        if td2.notna().any():
+                            df_time[col] = td2
+                        else:
+                            df_time[col] = pd.to_numeric(cleaned, errors="coerce")
+
+            # 3.2) Si la columna es timedelta, convertir a la unidad elegida
+            for col in valid_time_cols:
+                if pd.api.types.is_timedelta64_dtype(df_time[col]):
+                    # convertir timedelta -> segundos -> unidad
+                    df_time[col] = df_time[col].dt.total_seconds() / seconds_divisor
+
+            # 3.3) Convertir el resto a numérico (si ya son floats en la unidad elegida, no cambia)
+            df_time = df_time.apply(pd.to_numeric, errors="coerce")
+
+            # ---------- Cálculo y redondeo ----------
+            means = df_time.mean(numeric_only=True)
+            avg_df = means.round(DECIMALS).reset_index()
+            avg_df.columns = ["Metric", "Average"]
+
+# 7) Graficar si hay datos
 
 # =========================
 # HORIZONTAL BAR CHARTS (2 columnas)
@@ -595,7 +664,7 @@ ca, cb = st.columns(2)
 
 with ca:
     # Validamos que df_chart exista y tenga datos
-    if 'df_chart' in locals() and not df_chart.empty:
+    if 'df_chart' in locals() and isinstance(df_chart, pd.DataFrame) and not df_chart.empty:
         fig_unique_jobs = px.bar(
             df_chart.sort_values("Projects", ascending=True),
             x="Projects",
@@ -623,33 +692,38 @@ with ca:
         st.info("There is no data for the graph Impact/Late Conditions.")
 
 with cb:
-    # Validamos que avg_df exista y tenga datos para la gráfica de tiempos promedio
-    if 'avg_df' in locals() and not avg_df.empty:
+    if avg_df is not None and not avg_df.empty:
+        # Asegurar que el texto de las barras salga redondeado a DECIMALS
         fig_time = px.bar(
             avg_df.sort_values("Average"),
             x="Average",
             y="Metric",
             orientation="h",
-            title="Average Time Metrics (Filtered)",
+            title=f"Average Time Metrics (LATE & SUPER LATE) — {unit_label}",
             text="Average",
             color="Average",
             color_continuous_scale="Greens"
         )
 
-        fig_time.update_traces(textposition="outside")
+        # Forzar formato de las etiquetas (texto fuera de la barra, con n decimales)
+        texttemplate = "%{x:." + str(DECIMALS) + "f}"  # evita f-strings con llaves
+        fig_time.update_traces(
+            textposition="outside",
+            texttemplate=texttemplate
+        )
 
         fig_time.update_layout(
             plot_bgcolor=BG_COLOR,
             paper_bgcolor=BG_COLOR,
             font_color="white",
-            xaxis_title="Average (Days)",
+            xaxis_title=f"Average ({unit_label})",
             yaxis_title="Metric",
             margin=dict(l=20, r=20, t=40, b=20)
         )
 
         st.plotly_chart(fig_time, use_container_width=True)
     else:
-        st.info("There is no data for the graph Average Time Metrics.")
+        st.info("There is no data for the graph Average Time Metrics (LATE & SUPER LATE).")
 
 
 
